@@ -1,0 +1,14 @@
+{
+	"packageName": "ResoLoop",
+	"files": [
+		"ResoLoop.wl",
+		"ResoLoop_builder.wl",
+		"ResoLoop_mcp.wl"
+	],
+	"directories": [
+		"ResoLoop_info"
+	],
+	"excludePatterns": [
+		"ResoLoop_info/history/"
+	]
+}
