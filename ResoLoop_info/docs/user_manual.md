@@ -128,6 +128,8 @@ ResoLoopBuildWatch[]          (* 即座に返る。完了時に要約・root 名
 - `ResoLoopJobWait[]` は終わるまで同期に待ちます (スクリプト向け)。`ResoLoopJobCancel[]` / `ResoLoopJobs[]` / `ResoLoopJobEvents[]`。
 - 置き場所は既定でアバターの正面 1 m (`ResoLoopUserPlacement[]`: User Slot と Head の向きから計算。`"User" -> 名前` で複数人から選ぶ)。`"Placement" -> <|"Position" -> {x,y,z}, "Rotation" -> {x,y,z,w}|>` で明示もできます。
 - 同一プロジェクトは同時 1 件 (`Failure["Busy"]`)。ownership key は `vb-YYYYMMDD-HHMMSS-xxxx`、宣言は `content/<key>.json` に残ります。
+- **既にある物の変更**: 依頼文にワールドの `ResoLoop_...` の名前を書くと (例「ResoLoop_MoodLamp を重力に従うようにして」)、その物を作ったプロジェクトの宣言を編集する修正モードで走ります (`ResoLoopBuildTarget[依頼]` で何が対象になるか確かめられます)。新規配置はせず、root の位置は今の実測値のまま。所有 state が無ければ (別 PC で作った・セッションが変わった) 宣言と実物が一致するときだけ自動で束縛し直します。「作って」系の語があれば新規扱い (`"Target" -> "ResoLoop_X"` で明示できます)。
+- **Resonite の事実** (`$ResoLoopBuilderFacts`) をプロンプトに入れます。Resonite に RigidBody は無く、重力で落ちる物は Collider (`Type: CharacterController`) + `CharacterController` + ProtoFlux `HostUser` → `SimulatingUser` で作ります。依頼文は目的 (重力で落ちる・床に置ける) を書けばよく、部品名を指定する必要はありません。
 - PrivacyLevel > 0.5 (私有ワールド相当) は `Failure["BackendUnavailable"]` です。ローカル LLM backend は未実装で、黙ってクラウドへ送らない設計です。
 - `ResoLoopBuildPrompt[request]` はプロンプトだけを組み立てて返します (起動しない)。
 
@@ -171,6 +173,7 @@ ResoLoopBuildWatch[]          (* 即座に返る。完了時に要約・root 名
 | `$ResoLoopDefaultExternalRoles` | item audit で既定許可する外部参照ロール |
 | `$ResoLoopDefaultPrivacyLevel` | 観測結果の機密度の既定 (0.25) |
 | `$ResoLoopBuilderExecutable` / `$ResoLoopBuilderModel` / `$ResoLoopBuilderMaxTurns` / `$ResoLoopBuilderTimeout` / `$ResoLoopBuilderProject` / `$ResoLoopBuilderJobsDirectory` / `$ResoLoopBuilderAllowedTools` | 建築ジョブの設定 |
+| `$ResoLoopBuilderFacts` | 建築ジョブのプロンプトに入れる Resonite の事実 (RigidBody が無い → CharacterController で落とす、など) |
 | `$ResoLoopMCPAllowedTools` / `$ResoLoopMCPMaxChars` | MCP の pre-allow と結果本文の上限 |
 | `$ResoLoopRunner` | テスト用フック (RunProcess の代わりに呼ばれる関数) |
 

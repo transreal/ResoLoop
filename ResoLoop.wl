@@ -1029,7 +1029,7 @@ $iAgentHeads = {
   "ResoLoopFluxStatus", "ResoLoopFluxCheck", "ResoLoopFluxBuild", "ResoLoopFluxNodeSearch",
   "ResoLoopFluxNodeDescribe", "ResoLoopFluxValidateManifest",
   "ResoLoopBuildSubmit", "ResoLoopBuildWatch", "ResoLoopJobStatus", "ResoLoopJobResult", "ResoLoopJobWait", "ResoLoopJobs",
-  "ResoLoopJobEvents", "ResoLoopJobCancel", "ResoLoopBuildPrompt", "ResoLoopUserPlacement",
+  "ResoLoopJobEvents", "ResoLoopJobCancel", "ResoLoopBuildPrompt", "ResoLoopBuildTarget", "ResoLoopUserPlacement",
   "ResoLoopMCPTools", "ResoLoopMCPPromptDirective"};
 $iApprovalHeads = {
   "ResoLoopRun", "ResoLoopRunAsync", "ResoLoopApply", "ResoLoopFluxDeployManifest",

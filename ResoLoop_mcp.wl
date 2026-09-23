@@ -66,10 +66,11 @@ ResoLoop`ResoLoopMCPTools[] := {
         "project" -> imProp["string", "resoloop プロジェクト名 (既定 VoiceBuilds)"]|>,
       "required" -> {"kind"}|>|>,
   <|"name" -> "sourcevault_resonite_build",
-    "description" -> "自然文の依頼 (例「青い箱を目の前に作って」) を Resonite の世界に実装する建築ジョブを起動する。非同期: 即座に jobId を返す。完了は sourcevault_resonite_job_status が done になったとき (30 秒〜数分)。それまで利用者に『作りました』と言わない。同じプロジェクトで同時に走るのは 1 件。",
+    "description" -> "自然文の依頼 (例「青い箱を目の前に作って」) を Resonite の世界に実装する建築ジョブを起動する。既にワールドにある ResoLoop_... の物への変更 (機能追加・物理化など) も同じツールで、request に root 名を書く (または target)。非同期: 即座に jobId を返す。完了は sourcevault_resonite_job_status が done になったとき (30 秒〜数分)。それまで利用者に『作りました』と言わない。同じプロジェクトで同時に走るのは 1 件。",
     "inputSchema" -> <|"type" -> "object",
       "properties" -> <|
-        "request" -> imProp["string", "作る物の依頼文 (日本語 1〜3 文。大きさ・色・機能・置き場所があれば含める)"],
+        "request" -> imProp["string", "作る物・変える物の依頼文 (日本語 1〜3 文。大きさ・色・機能・置き場所があれば含める。既存物なら root 名 ResoLoop_... を含める)"],
+        "target" -> imProp["string", "変更する既存の物の root 名 (ResoLoop_...)。新規作成なら省略"],
         "project" -> imProp["string", "resoloop プロジェクト名 (既定 VoiceBuilds)"],
         "user" -> imProp["string", "正面に置く利用者の名前 (複数人いるとき)"],
         "distance" -> imProp["number", "利用者からの距離 m (既定 1.0)"]|>,
@@ -220,6 +221,7 @@ ResoLoop`ResoLoopMCPCallTool[name_String, args_Association] :=
       "sourcevault_resonite_build",
         If[!StringQ[imStr[args, "request"]], Return[imError["request が要ります。"]]];
         r = ResoLoop`ResoLoopBuildSubmit[imStr[args, "request"], "Project" -> project, "Origin" -> "MCP",
+          "Target" -> Replace[imStr[args, "target"], None -> Automatic],
           "Placement" -> <|"User" -> Replace[imStr[args, "user"], None -> Automatic],
             "Distance" -> With[{d = Lookup[args, "distance", 1.0]}, If[NumericQ[d], d, 1.0]]|>];
         imOut[If[FailureQ[r], r,

@@ -25,8 +25,12 @@ Resonite の世界の構造 (Slot / Component / ProtoFlux) を変える窓口は
 3. **完了報告は job_result から**: `summary` (何をどこに作ったか) と `capture` (撮影画像のパス) をそのまま使い、作文で補わない。
 4. **削除は人の同意の後**: `sourcevault_resonite_remove` は `confirm` 無しで呼ぶと候補 (名前と子 Slot 数) を返すだけ。利用者が
    その候補に明示的に同意した後でだけ `confirm: true` で呼び直す。所有外 (`ResoLoop_*` で始まらない root) は消せない。
-5. **小さな調整は adjust**: 位置・回転・大きさ・名前・Component の 1 フィールドの変更は `sourcevault_resonite_adjust`。
-   作り直しが要る変更は新しい build にする。
+5. **小さな調整は adjust、機能の追加・変更は build**: 位置・回転・大きさ・名前・Component の 1 フィールドの変更は
+   `sourcevault_resonite_adjust`。既にある物に部品や仕組みを足す変更 (「ResoLoop_MoodLamp を重力に従うように」など) は
+   `sourcevault_resonite_build` の `request` に root 名 `ResoLoop_...` を書く (または `target`)。builder は宣言を編集する
+   修正モードで走り、所有 state が無ければ宣言と実物が一致するときだけ束縛し直す。別の物として作り直すなら普通の build。
+8. **依頼文には目的を書き、Resonite に無い部品名を書かない**: Resonite に RigidBody / Kinematic / NoGravity は無い。
+   「重力で落ちる」「床に置ける」と目的を書けば、builder が CharacterController + HostUser 駆動の SimulatingUser で実装する。
 6. **ノートブック側の直接 API** (`ResoLoop*`) を使うコードを生成するときも同じ制約に従う: `ResoLoopSlotDelete` /
    `ResoLoopApply["Prune" -> True]` には `"Confirm" -> True` が要り、`--adopt` は `"Adopt" -> True` を人が書いたときだけ。
 7. **ノートブックのコードで建築するときは「投げて見張る」の 1 セルにする**: `ResoLoopBuildSubmit[依頼]; ResoLoopBuildWatch[]`。

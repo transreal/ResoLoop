@@ -109,9 +109,14 @@ allow = `Bash(resoloop *)`, `PowerShell(resoloop *)`, Read/Write/Edit/Glob/Grep�
 (CLAUDE.md と `.claude/skills/resonite-*` が効く)。別 OS プロセスなので非ブロック。進捗は stream-json を後から読んで判定する (polling tick 不要)。
 PrivacyLevel > 0.5 は `Failure["BackendUnavailable"]` (ローカル LLM backend は未実装。黙ってクラウドへ送らない)。
 
-### ResoLoopBuildSubmit[request] → <|"JobId","Ownership","Project","Status","Phase","Placement"|> | Failure
-Options: `"Project" -> $ResoLoopBuilderProject ("VoiceBuilds"), "Placement" -> Automatic | <|"User","Distance"|> | <|"Position","Rotation"|>, "Backend" -> Automatic, "PrivacyLevel" -> Automatic, "Model", "MaxTurns" -> 80, "Timeout" -> 900, "Origin" -> "Notebook", "Ownership" -> Automatic`
-同一プロジェクトで同時 1 件 (`Failure["Busy"]`)。ownership key は `vb-YYYYMMDD-HHMMSS-xxxx`、宣言は `content/<key>.json`。
+### ResoLoopBuildSubmit[request] → <|"JobId","Ownership","Project","Status","Phase","Placement","Mode","Target"|> | Failure
+Options: `"Project" -> $ResoLoopBuilderProject ("VoiceBuilds"), "Placement" -> Automatic | <|"User","Distance"|> | <|"Position","Rotation"|>, "Backend" -> Automatic, "PrivacyLevel" -> Automatic, "Model", "MaxTurns" -> 80, "Timeout" -> 900, "Origin" -> "Notebook", "Ownership" -> Automatic, "Target" -> Automatic | None | "ResoLoop_X", "Adopt" -> Automatic | False`
+同一プロジェクトで同時 1 件 (`Failure["Busy"]`)。新規 (Mode `create`) の ownership key は `vb-YYYYMMDD-HHMMSS-xxxx`、宣言は `content/<key>.json`。
+**既存物の変更 (Mode `modify`)**: 依頼文に既にワールドにある `ResoLoop_...` の名前があり (大文字小文字は問わない)、「作って」系の語が無ければ、その物を作ったプロジェクトで走り、既存の宣言 `content/<key>.json` を編集する (新しい宣言は作らない。`"Target" -> "ResoLoop_X"` で明示、`None` で常に新規)。root の transform は実測値を宣言に写して跳ばせない。所有 state `.resoloop/state/<key>.json` が無い (別 PC で作った・セッションが変わった) ときは、`diff --adopt` に delete / rename / Slot の create が無いことを確かめてから `apply --adopt` で束縛し直す (`"Adopt" -> False` なら `Failure["OwnershipUnbound"]`。危ない差分は `Failure["AdoptUnsafe"]` で人に返す)。プロジェクトには builder の安全設定 (`ResoLoopProjectSync["BuilderPolicy" -> True]`) を揃える。
+### ResoLoopBuildTarget[requestOrRootName] → <|"RootName","Project","Directory","File","Ownership","LiveId","Path","Transform","StateFile","StateBound","FluxManifests"|> | None | Failure
+文中の `ResoLoop_...` をプロジェクト群の宣言 (`content/*.json` の `slot.name`) とワールドの実物 (`find`, Root 直下) の両方で照合する。無ければ `None` (新規)。実物だけなら `Failure["TargetDeclarationMissing"]` (adjust を使う)、宣言だけなら `Failure["TargetNotFound"]`。
+### $ResoLoopBuilderFacts
+プロンプトに入れる Resonite の事実 (文字列のリスト)。既定: Resonite に RigidBody は無く、重力落下は root の Collider (`Type: CharacterController`) + `FrooxEngine.CharacterController` + ProtoFlux `HostUser` → `$member:cc.SimulatingUser` (mode drive) で実装し、Grabbable が付く物は `not IsGrabbableGrabbed(...)` を `$member:cc.Enabled` に drive して掴み中は止める (止めないと持ち上がらない。SimulatingUser が空だと動かない。ResoniteLink は User 参照を書けない。実機 2026-09-23 検証)、Unity 系の部品名 (RigidBody / Kinematic / NoGravity) は目的の言い換えとして読む、など。
 ### ResoLoopJobStatus[jobId] → <|"JobId","Status" (running|done|failed|cancelled),"Phase","Ownership","Elapsed","ToolCalls","LastCommand","Summary","RootName"|>
 phase は最後のツール呼び出しから推定: inspecting / authoring / validating / applying / compiling / deploying / verifying / done。jobId 省略で直近。
 ### ResoLoopJobResult[jobId] → Report (ownership / rootName / summary / capture / verification / notes)、Capture (絶対パス)、Turns、Cost、Denials、Events | Failure["Running"]
@@ -125,7 +130,7 @@ ClaudeEval のコードは `ResoLoopBuildSubmit[...]; ResoLoopBuildWatch[]` の 
 ### ResoLoopRegisterHeads[] → <|"Registered","Approval"|> | Missing["NoNBAccess"]
 NBAccess の許可ヘッド (読み取り系・ジョブ系・`ResoLoopBuildSubmit` など 44 個。`ResoLoopBuildWatch` を含む) と承認ヘッド (`ResoLoopApply` / `ResoLoopSlotDelete` / `ResoLoopRun` など) を 2 層 (`NBRegisterAllowedHeads` + `NBRegisterTrustedPackageHeads`) で登録する。ロード時に自動実行。
 `ClaudeCode`$ClaudePackageKeywordMap["ResoLoop"]` にも語 (Resonite / resoloop / ProtoFlux …) を登録する。
-### ResoLoopBuildPrompt[request, opts] → プロンプト文字列 (起動しない)。手順 (type describe → 宣言 → validate → strict → diff → apply ×2 → capture → item audit) と 1 行 JSON 報告の書式を含む。
+### ResoLoopBuildPrompt[request, opts] → プロンプト文字列 (起動しない)。手順 (type describe → 宣言 → validate → strict → diff → apply ×2 → capture → item audit → 挙動の実測) と 1 行 JSON 報告の書式、`$ResoLoopBuilderFacts` を含む。`"Target" -> ResoLoopBuildTarget の結果` で修正モードの文面 (既存宣言の編集、root 配下の update 許可、delete 禁止、配置なし)。
 ### ResoLoopUserPlacement[] → <|"Position","Rotation","User","UserId","HeadPosition","Forward"|>
 利用者の User Slot と Head の向き (ヨー) から正面 `"Distance"` (1.0 m)、高さ = 頭 − 0.35 m の点。`Rotation` は正規化済みで、局所 −Z (TextRenderer の読める面) が利用者を向く。`"User" -> 名前` で複数人から選ぶ。
 ### 変数

@@ -87,7 +87,7 @@ ResoLoopBuildWatch[]
 - **原始操作**: `ResoLoopSlotCreate` / `ResoLoopSlotSet` / `ResoLoopSlotDelete` / `ResoLoopComponentAdd` / `ResoLoopComponentSet` / `ResoLoopComponentRemove` (所有境界内のみ)。
 - **ProtoFlux**: `ResoLoopFluxCheck` / `ResoLoopFluxBuild` / `ResoLoopFluxNodeSearch` / `ResoLoopFluxDeployManifest` (Flux-SDK)。
 - **非同期**: `ResoLoopRunAsync` とジョブ回収 (サービスカーネル向け)。
-- **建築ジョブ**: `ResoLoopBuildSubmit` / `ResoLoopBuildWatch` / `ResoLoopJobStatus` / `ResoLoopJobResult` / `ResoLoopUserPlacement` (アバター正面の置き場所)。
+- **建築ジョブ**: `ResoLoopBuildSubmit` / `ResoLoopBuildWatch` / `ResoLoopJobStatus` / `ResoLoopJobResult` / `ResoLoopUserPlacement` (アバター正面の置き場所)。依頼文に既存の `ResoLoop_...` の名前があれば、その物を作った宣言を編集する修正モード (`ResoLoopBuildTarget`)。プロンプトには Resonite の事実 (`$ResoLoopBuilderFacts`: RigidBody は無く、落下は CharacterController + HostUser 駆動) を入れる。
 - **MCP tool**: `sourcevault_resonite_status` / `query` / `build` / `job_status` / `job_result` / `adjust` / `remove`。
 
 ### ドキュメント一覧

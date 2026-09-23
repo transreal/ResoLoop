@@ -16,6 +16,17 @@
 
    PrivacyLevel > 0.5 (私有ワールド) は LocalToolLoop backend の担当だが v0.1 では未実装 →
    Failure["BackendUnavailable"] を返す (黙ってクラウドに送らない)。
+
+   既存物の変更 (2026-09-23): 依頼文が既にワールドにある ResoLoop 製の物 (`ResoLoop_...`) を指すときは
+   **修正モード**で走る。宣言はその物を作ったプロジェクトの content/<key>.json を編集し (新しい宣言を作らない)、
+   root の transform は実測値を宣言に写して跳ばないようにし、所有 state (.resoloop/state/<key>.json) が無ければ
+   (別 PC で作った・セッションが変わった) 宣言と実物が一致することを diff --adopt で確かめてから束縛し直す。
+   新規配置 (利用者の正面) は渡さない。MoodLamp の重力化ジョブが「RigidBody が無い」「APPLY_OWNERSHIP_UNVERIFIED
+   (--adopt 禁止)」「新規配置の座標を渡された」の三重で何もせず終わった (rlb-20260923-142111-dec62c) のが動機。
+
+   Resonite の事実 ($ResoLoopBuilderFacts) をプロンプトに入れる: Resonite に RigidBody は無く、重力落下は
+   CharacterController + Collider(Type CharacterController) + ProtoFlux HostUser → SimulatingUser で作る
+   (SimulatingUser が空だと動かない。ResoniteLink は User 参照を書けない。実機 2026-09-23 で検証)。
 *)
 
 BeginPackage["ResoLoop`"];
@@ -28,12 +39,21 @@ ResoLoop`$ResoLoopBuilderTimeout::usage = "$ResoLoopBuilderTimeout は 1 ジョ�
 ResoLoop`$ResoLoopBuilderProject::usage = "$ResoLoopBuilderProject は建築ジョブの既定プロジェクト (既定 \"VoiceBuilds\")。";
 ResoLoop`$ResoLoopBuilderJobsDirectory::usage = "$ResoLoopBuilderJobsDirectory はジョブ記録の置き場 (既定 %LOCALAPPDATA%\\ResoLoop\\jobs)。";
 ResoLoop`$ResoLoopBuilderAllowedTools::usage = "$ResoLoopBuilderAllowedTools は --allowedTools に渡すリスト。";
+ResoLoop`$ResoLoopBuilderFacts::usage =
+  "$ResoLoopBuilderFacts は建築ジョブのプロンプトに入れる Resonite の事実 (文字列のリスト)。型が見つからない機能の実装手段 (重力落下 = CharacterController + HostUser 駆動の SimulatingUser など)、エージェントが推測で諦めないための知識。";
 
 ResoLoop`ResoLoopBuildSubmit::usage =
-  "ResoLoopBuildSubmit[request] は自然文の依頼を建築ジョブとして起動し、直ちにジョブ (Association: JobId / Ownership / Project / Status) を返す。\n" <>
+  "ResoLoopBuildSubmit[request] は自然文の依頼を建築ジョブとして起動し、直ちにジョブ (Association: JobId / Ownership / Project / Status / Mode / Target) を返す。\n" <>
   "オプション: \"Project\" -> $ResoLoopBuilderProject, \"Placement\" -> Automatic (利用者の正面) | <|\"User\" -> 名前, \"Distance\" -> 1.0|> | <|\"Position\" -> {x,y,z}, \"Rotation\" -> {x,y,z,w}|>,\n" <>
-  "  \"Backend\" -> Automatic (\"ClaudeCLI\"), \"PrivacyLevel\" -> Automatic (ResoLoopPrivacyLevel[])、\"Model\", \"MaxTurns\", \"Timeout\", \"Origin\" -> \"Notebook\"。\n" <>
+  "  \"Backend\" -> Automatic (\"ClaudeCLI\"), \"PrivacyLevel\" -> Automatic (ResoLoopPrivacyLevel[])、\"Model\", \"MaxTurns\", \"Timeout\", \"Origin\" -> \"Notebook\",\n" <>
+  "  \"Target\" -> Automatic (依頼文中の ResoLoop_... を既存物として検出。作る・作成などの語があれば新規) | None (常に新規) | \"ResoLoop_X\" (この既存物を変更),\n" <>
+  "  \"Adopt\" -> Automatic (既存物の所有 state が無いとき、宣言と実物が一致する = diff --adopt に delete / Slot の create が無い場合だけ束縛し直す) | False。\n" <>
+  "既存物の変更 (Mode \"modify\") はその物を作ったプロジェクトで走り、宣言 content/<key>.json を編集し、root の transform は実測値のまま保つ。\n" <>
   "進捗は ResoLoopJobStatus[jobId]、結果は ResoLoopJobResult[jobId]。";
+ResoLoop`ResoLoopBuildTarget::usage =
+  "ResoLoopBuildTarget[requestOrRootName] は文中の ResoLoop_... という名前 (大文字小文字は問わない) を、プロジェクト群の宣言 (content/*.json の slot.name) とワールドの実物の両方で照合し、\n" <>
+  "<|\"RootName\",\"Project\",\"Directory\",\"File\",\"Ownership\",\"LiveId\",\"Path\",\"Transform\",\"StateFile\",\"StateBound\",\"FluxManifests\"|> を返す。\n" <>
+  "名前が無い・宣言も実物も無いなら None (新規作成の依頼)。実物だけなら Failure[\"TargetDeclarationMissing\"]、宣言だけなら Failure[\"TargetNotFound\"]。";
 ResoLoop`ResoLoopJobStatus::usage =
   "ResoLoopJobStatus[jobId] は <|\"JobId\",\"Status\" (queued|running|done|failed|cancelled),\"Phase\",\"Ownership\",\"Elapsed\",\"ToolCalls\",\"LastCommand\",\"Summary\"|>。jobId 省略で直近のジョブ。";
 ResoLoop`ResoLoopJobResult::usage =
@@ -70,6 +90,20 @@ If[!StringQ[ResoLoop`$ResoLoopBuilderJobsDirectory],
     "ResoLoop", "jobs"}]];
 If[!ListQ[ResoLoop`$ResoLoopBuilderAllowedTools],
   ResoLoop`$ResoLoopBuilderAllowedTools = {"Bash(resoloop *)", "PowerShell(resoloop *)", "Read", "Write", "Edit", "Glob", "Grep", "Skill"}];
+
+(* Resonite の事実。実機 (Resonite 2026.9.18.82 / ResoniteLink 0.13.1 / Flux-SDK 1.9.0) で 2026-09-23 に検証:
+   SphereCollider(Type CharacterController) + CharacterController だけでは 1 分たっても落ちず、HostUser を
+   SimulatingUser に drive したら 6 秒以内に床 (y=0) まで落ちた。子の Static Collider があっても同じ。 *)
+If[!ListQ[ResoLoop`$ResoLoopBuilderFacts],
+  ResoLoop`$ResoLoopBuilderFacts = {
+    "Resonite (2026.9 現在) に RigidBody や汎用の剛体シミュレーションは無い。`type search RigidBody` / `rigid` / `Kinematic` が空なのは正しい結果であり、依頼を諦める理由ではない。『重力で落ちる』『床に置ける』『持ち上げて放すと落ちる』は次の 3 点で実装する (実機 2026-09-23 検証済):\n" <>
+    "  (a) root Slot に形に合う Collider を 1 つ `\"Type\": \"CharacterController\"` で付ける (SphereCollider / CapsuleCollider / BoxCollider。物の底が Slot 原点に来るよう `Offset` を調整する。子 Slot にある Static な Collider はそのまま残してよい: 自分自身とは衝突しない)。\n" <>
+    "  (b) 同じ Slot に `FrooxEngine.CharacterController` を付ける (fields は空でよい。Gravity 既定 [0, -9.81, 0])。\n" <>
+    "  (c) `SimulatingUser` が空だと一切動かない。ResoniteLink は User 参照を直接書けない (COMPONENT_UPDATE_FAILED) ので、ProtoFlux で `HostUser` を `$member:<CharacterController の key>.SimulatingUser` に mode drive で結線する (`out SimUser: User` / `SimUser = HostUser;`)。manifest は parent `$slot:root`、bindings `\"SimUser\": {\"target\": \"$member:cc.SimulatingUser\", \"mode\": \"drive\"}` (cc は CharacterController の key)。\n" <>
+    "  (d) **Grabbable が付く物は、掴んでいる間 CharacterController を止める** (止めないと重力が手と喧嘩して持ち上げられない。2026-09-23 実機)。同じモジュールに `in Grab: Grabbable element` / `_g: IGrabbable = Grab->as<IGrabbable>;` / `_held = IsGrabbableGrabbed(Grabbable=_g);` / `out GravityOn: bool` / `GravityOn = not _held;` を足し、bindings に `\"Grab\": {\"target\": \"$component:<Grabbable の key>\", \"mode\": \"source\"}` と `\"GravityOn\": {\"target\": \"$member:cc.Enabled\", \"mode\": \"drive\"}` を加える。\n" <>
+    "  検証: apply と flux deploy-manifest の後 5 秒待って root を `inspect` し、position.y が下がって床で止まっていること (verification は runtime)。掴んで持ち上げる操作は ResoniteLink からは行えないので notes に未確認と書く。",
+    "ColliderType の `Active` は動く物に付ける Collider の種別で、それ自体は重力や力学を与えない。`Static` は動かない物用だが、掴んで動かせる物の子に付いていても支障はない。",
+    "依頼文に Resonite に無い部品名・設定名 (RigidBody / Rigidbody / NoGravity / Kinematic / UseGravity など Unity 系の語) があっても、それは目的の言い換えとして読み、上の手段で同じ結果を実現する。『該当する型が無いので未実装』で終えない。"}];
 
 $ibProcs = <||>;   (* jobId -> ProcessObject (このカーネルが起動したものだけ) *)
 
@@ -225,38 +259,234 @@ ibPlacementText[p_Association] :=
       If[StringQ[user], "- 利用者「" <> user <> "」の正面" <> If[NumericQ[dist], " " <> ibNum[dist] <> " m", ""] <> "。物の大きさは手に取れる程度 (0.1〜0.4 m) を既定とし、依頼に大きさがあればそれに従う\n", ""],
       If[!ListQ[pos], "- 位置の指定なし: Root 直下、position [0, 1.3, -0.8] に置く\n", ""]]];
 
-Options[ResoLoop`ResoLoopBuildPrompt] = {"Project" -> Automatic, "Ownership" -> Automatic, "Placement" -> <||>, "URL" -> Automatic};
+ibFactsText[] :=
+  With[{facts = Select[Replace[ResoLoop`$ResoLoopBuilderFacts, Except[_List] -> {}], StringQ]},
+    If[facts === {}, "",
+      "## Resonite の事実 (推測より優先する)\n" <> StringJoin[("- " <> # <> "\n") & /@ facts] <> "\n"]];
+
+(* 既存物の変更ジョブ: 対象の説明 (ResoLoopBuildTarget の結果から) *)
+ibTargetText[t_Association] :=
+  Module[{key = t["Ownership"], manifests = Replace[Lookup[t, "FluxManifests", {}], Except[_List] -> {}]},
+    StringJoin[
+      "## 対象 (既にワールドにある物。新しく作らない)\n",
+      "- root Slot: `", t["RootName"], "` (path `", Lookup[t, "Path", "Root/" <> t["RootName"]], "`。今のセッションでの ID は `", ToString[Lookup[t, "LiveId", "?"]],
+        "`: セッション限定なので観測 (inspect / hierarchy) にだけ使い、宣言や manifest には書かない)。\n",
+      "- 宣言: `", t["File"], "` (ownership key `", key, "`)。**このファイルを編集する**。新しい宣言ファイルは作らない。\n",
+      "- 所有: state `.resoloop/state/", key, ".json` に束縛済み。`$slot:root` / `$component:key` / `$member:key.Member` は ownership key から自動で解決される (`--state` を付けるならこのファイル)。\n",
+      If[manifests =!= {},
+        "- 既存の ProtoFlux manifest: " <> StringRiffle[("`" <> # <> "`") & /@ manifests, ", "] <>
+          " (既存モジュールと manifest は触らない。新しいモジュールが要るときは別 manifest `flux/" <> key <> "-<機能>.flux.json` を作る: worldState `../.resoloop/state/" <> key <>
+          ".json`、deployState `../.resoloop/flux-state/" <> key <> "-<機能>.json`、parent `$slot:root`)。\n",
+        "- ProtoFlux が要るときは manifest `flux/" <> key <> "-<機能>.flux.json` を作る (worldState `../.resoloop/state/" <> key <> ".json`、deployState `../.resoloop/flux-state/" <> key <> "-<機能>.json`、parent `$slot:root`)。\n"],
+      "- root の key / name / parent / position / rotation / scale は変えない (宣言には今の実測値が入っている)。既存の子 Slot・Component・見た目・機能は壊さない。\n",
+      "- このプロジェクトにある他の宣言・state には触らない。\n\n"]];
+
+ibNamingText[key_String, placement_Association] :=
+  StringJoin[
+    "## 命名と配置\n",
+    "- ownership key: `", key, "`。宣言は `content/", key, ".json` (ProtoFlux を使うときは `flux/", key, ".pg` と `flux/", key, ".flux.json`)。\n",
+    "- root Slot の key は `root`、名前は `ResoLoop_` + 物の英語名 (例 `ResoLoop_YellowCone`。依頼文をそのまま使わない)。parent は Root、`runtimeRelocatable: true`、Grabbable を付ける。\n",
+    ibPlacementText[placement],
+    "- このプロジェクトにある他の宣言・state には触らない。\n\n"];
+
+ibAuditStep[n_Integer, key_String, roles_String] :=
+  StringJoin[ToString[n], ". `resoloop item audit '$slot:root' --state .resoloop/state/", key, ".json --strict --json` を実行する。ITEM_NOT_PORTABLE なら報告の externalRoleCandidates を見て、次の 4 つ (エンジン既定) に含まれるものだけを `--allow-external-role` で許可して再実行する: ", roles, "。使わないロールを渡すと strict では ITEM_ALLOW_ROLE_UNUSED で落ちる。監査を通すためだけに部品を足さない。\n"];
+
+ibReportStep[n_Integer, key_String, rootName_String] :=
+  StringJoin[ToString[n], ". 最後の出力は次の JSON を 1 行だけにする (前後に他の文を書かない):\n",
+    "{\"ownership\":\"", key, "\",\"rootName\":\"", rootName, "\",\"summary\":\"<日本語 1 文。何をどこに作った・変えたか>\",\"capture\":\"artifacts/", key, ".jpg\",\"verification\":\"structural\"|\"runtime\",\"notes\":\"<未確認事項や失敗理由。無ければ空>\"}\n\n"];
+
+ibCreateSteps[key_String, roles_String] :=
+  StringJoin[
+    "## 手順 (省略しない)\n",
+    "1. 使う Component の型とメンバーは `resoloop type search` / `type describe` で確認する (名前を推測しない)。ProtoFlux のノードは `flux node search` / `flux node describe`。\n",
+    "2. 宣言を書く。cameras に `main` (root を正面から写す) と tests (root と主要 Component の exists) を含める。\n",
+    "3. `resoloop validate <file> --json` → `--strict --json` → `resoloop diff <file> --changes-only --json`。create 以外の操作 (update/delete) が出たら適用せず、理由を報告して止める。\n",
+    "4. `resoloop apply <file> --quiet --json`。続けて同じ apply をもう一度実行し、slotsUpdated と componentsUpdated が 0 であることを確認する (収束)。\n",
+    "5. ProtoFlux を使うなら `flux check` → `flux validate-manifest` → `flux deploy-manifest`。Slot の transform を駆動するときは ValueField<T> + ValueCopy<T> で中継する (manifest は Slot のフィールドを直接駆動できない)。\n",
+    "6. `resoloop capture <file> --camera main --output artifacts/", key, ".jpg --json` で撮影する。\n",
+    ibAuditStep[7, key, roles],
+    "8. 依頼が挙動 (落ちる・動く・光る・押せる) を含むなら、apply / deploy の 5 秒後に `inspect` で実測して確認し、verification を runtime にする。確認できなければ structural にして notes に書く。\n",
+    ibReportStep[9, key, "ResoLoop_..."]];
+
+ibModifySteps[key_String, t_Association, roles_String] :=
+  StringJoin[
+    "## 手順 (省略しない)\n",
+    "1. 現状を観測する: `resoloop inspect $slot:root --depth 3 --json` と宣言ファイルを読む。使う Component の型とメンバーは `resoloop type search` / `type describe` で確認する (名前を推測しない)。ProtoFlux のノードは `flux node search` / `flux node describe`。\n",
+    "2. 宣言を編集する: 既存の key と構造を保ち、必要な Component / 子 Slot を足す・直す。同じ Slot の同型 Component には一意な key。実行時に書き換わるフィールドは initialFields に置く。cameras に `main` が無ければ足し、tests に追加した主要 Component の exists を足す。\n",
+    "3. `resoloop validate <file> --json` → `--strict --json` → `resoloop diff <file> --changes-only --json`。`", Lookup[t, "Path", "Root/" <> t["RootName"]], "` 配下への create / update は適用してよい。**delete / rename、または配下以外への変更が 1 つでも出たら適用せず、理由を報告して止める**。\n",
+    "4. `resoloop apply <file> --quiet --json`。続けて同じ apply をもう一度実行し、slotsUpdated と componentsUpdated が 0 であることを確認する (収束)。\n",
+    "5. ProtoFlux を使うなら `flux check` → `flux validate-manifest` → `flux deploy-manifest`。Slot の transform を駆動するときは ValueField<T> + ValueCopy<T> で中継する。\n",
+    "6. `resoloop capture <file> --camera main --output artifacts/", key, ".jpg --json` で撮影する (カメラが物からずれていれば宣言の cameras.main を直してから)。\n",
+    ibAuditStep[7, key, roles],
+    "8. 依頼が挙動 (落ちる・動く・光る・押せる) を含むなら、apply / deploy の 5 秒後に `inspect` で実測して確認し、verification を runtime にする。確認できなければ structural にして notes に書く。\n",
+    ibReportStep[9, key, t["RootName"]]];
+
+Options[ResoLoop`ResoLoopBuildPrompt] = {"Project" -> Automatic, "Ownership" -> Automatic, "Placement" -> <||>, "URL" -> Automatic, "Target" -> None};
 ResoLoop`ResoLoopBuildPrompt[request_String, OptionsPattern[]] :=
-  Module[{key, url, placement, roles},
-    key = Replace[OptionValue["Ownership"], Automatic :> ibOwnershipKey[]];
+  Module[{key, url, placement, roles, target, modify},
+    target = Replace[OptionValue["Target"], Except[_Association] -> None];
+    modify = AssociationQ[target];
+    key = If[modify, target["Ownership"], Replace[OptionValue["Ownership"], Automatic :> ibOwnershipKey[]]];
     url = Replace[OptionValue["URL"], Automatic :> If[StringQ[ResoLoop`$ResoLoopURL], ResoLoop`$ResoLoopURL, "auto"]];
-    placement = Replace[OptionValue["Placement"], Except[_Association] -> <||>];
+    placement = If[modify, <||>, Replace[OptionValue["Placement"], Except[_Association] -> <||>]];
     roles = StringRiffle[("`" <> # <> "`") & /@ ResoLoop`$ResoLoopDefaultExternalRoles, ", "];
     StringJoin[
-      "あなたはこの resoloop プロジェクト (カレントディレクトリ) の中で作業しています。プロジェクトの CLAUDE.md と skill (resonite-build / resonite-flux / resonite-inspect) に従い、次の依頼を Resonite の世界に実装してください。\n\n",
+      "あなたはこの resoloop プロジェクト (カレントディレクトリ) の中で作業しています。プロジェクトの CLAUDE.md と skill (resonite-build / resonite-flux / resonite-inspect) に従い、次の依頼を Resonite の世界に実装してください。",
+      If[modify, "これは**既にワールドにある ResoLoop 製の物への変更**です。新しい物は作りません。", ""], "\n\n",
       "## 依頼\n", request, "\n\n",
+      ibFactsText[],
       "## 接続\n",
       "- すべての resoloop コマンドに `--url ", url, " --json` を付ける (discover は不要)。\n",
       "- resoloop は素のコマンド 1 つで呼ぶ。パイプ・`2>&1`・`||`・PowerShell の補助ロジックで包まない (許可リスト外で拒否される)。\n\n",
-      "## 命名と配置\n",
-      "- ownership key: `", key, "`。宣言は `content/", key, ".json` (ProtoFlux を使うときは `flux/", key, ".pg` と `flux/", key, ".flux.json`)。\n",
-      "- root Slot の key は `root`、名前は `ResoLoop_` + 物の英語名 (例 `ResoLoop_YellowCone`。依頼文をそのまま使わない)。parent は Root、`runtimeRelocatable: true`、Grabbable を付ける。\n",
-      ibPlacementText[placement],
-      "- このプロジェクトにある他の宣言・state には触らない。\n\n",
-      "## 手順 (省略しない)\n",
-      "1. 使う Component の型とメンバーは `resoloop type search` / `type describe` で確認する (名前を推測しない)。ProtoFlux のノードは `flux node search` / `flux node describe`。\n",
-      "2. 宣言を書く。cameras に `main` (root を正面から写す) と tests (root と主要 Component の exists) を含める。\n",
-      "3. `resoloop validate <file> --json` → `--strict --json` → `resoloop diff <file> --changes-only --json`。create 以外の操作 (update/delete) が出たら適用せず、理由を報告して止める。\n",
-      "4. `resoloop apply <file> --quiet --json`。続けて同じ apply をもう一度実行し、slotsUpdated と componentsUpdated が 0 であることを確認する (収束)。\n",
-      "5. ProtoFlux を使うなら `flux check` → `flux validate-manifest` → `flux deploy-manifest`。Slot の transform を駆動するときは ValueField<T> + ValueCopy<T> で中継する (manifest は Slot のフィールドを直接駆動できない)。\n",
-      "6. `resoloop capture <file> --camera main --output artifacts/", key, ".jpg --json` で撮影する。\n",
-      "7. `resoloop item audit '$slot:root' --state .resoloop/state/", key, ".json --strict --json` を実行する。ITEM_NOT_PORTABLE なら報告の externalRoleCandidates を見て、次の 4 つ (エンジン既定) に含まれるものだけを `--allow-external-role` で許可して再実行する: ", roles, "。使わないロールを渡すと strict では ITEM_ALLOW_ROLE_UNUSED で落ちる。監査を通すためだけに部品を足さない。\n",
-      "8. 最後の出力は次の JSON を 1 行だけにする (前後に他の文を書かない):\n",
-      "{\"ownership\":\"", key, "\",\"rootName\":\"ResoLoop_...\",\"summary\":\"<日本語 1 文。何をどこに作ったか>\",\"capture\":\"artifacts/", key, ".jpg\",\"verification\":\"structural\"|\"runtime\",\"notes\":\"<未確認事項や失敗理由。無ければ空>\"}\n\n",
+      If[modify, ibTargetText[target], ibNamingText[key, placement]],
+      If[modify, ibModifySteps[key, target, roles], ibCreateSteps[key, roles]],
       "## 禁止\n",
       "- `slot delete` / `component remove` / `--prune` / `--adopt`。Root や `ResoLoop_` で始まらない既存物の変更。\n",
+      If[modify, "- 対象の root や既存の子 Slot (ProtoFlux モジュールを含む) の削除・改名・移動。\n", ""],
       "- resoloop 以外の手段でワールドに触ること。\n",
-      "- 完了していないのに完了と書くこと。途中で失敗したら、その時点までの状態と理由を summary と notes に書く。\n"]];
+      "- 完了していないのに完了と書くこと。途中で失敗したら、その時点までの状態と理由を summary と notes に書く。\n",
+      "- 依頼された機能に使える型が見つからないとき、上の「Resonite の事実」を確かめずに未実装で終えること。\n"]];
+
+(* ============================================================
+   既存物の特定 (修正モード)
+   ============================================================ *)
+
+ibRegexEscape[s_String] :=
+  StringReplace[s, {"\\" -> "\\\\", "." -> "\\.", "^" -> "\\^", "$" -> "\\$", "|" -> "\\|", "?" -> "\\?", "*" -> "\\*",
+    "+" -> "\\+", "(" -> "\\(", ")" -> "\\)", "[" -> "\\[", "]" -> "\\]", "{" -> "\\{", "}" -> "\\}"}];
+
+(* 依頼文中の所有接頭辞つきの名前 (ResoLoop_...)。大文字小文字は問わない (タブレットの LLM は Resoloop_ と書く) *)
+ibDetectTargetName[request_String] :=
+  Module[{prefixes = Select[Replace[ResoLoop`$ResoLoopOwnershipPrefixes, Except[_List] -> {}], StringQ], hits},
+    If[prefixes === {}, Return[None]];
+    hits = StringCases[request,
+      RegularExpression["(?i)(?<![A-Za-z0-9_])((?:" <> StringRiffle[ibRegexEscape /@ prefixes, "|"] <> ")[A-Za-z0-9_]+)"] :> "$1"];
+    If[hits === {}, None, First[hits]]];
+
+(* 「作って」系の語があれば、名前が出ていても新規作成の依頼 (「ResoLoop_Box の隣に赤い箱を作って」) *)
+ibCreationRequestQ[request_String] :=
+  StringContainsQ[request, RegularExpression["(?i)作っ|作る|作成|作り|生成|新しく|新規|置い|出し|建て|\\bcreate|\\bbuild|\\bmake|\\bspawn|\\bplace"]];
+
+(* プロジェクト群の宣言 (content/*.json) の一覧。root 名で既存物を探すため *)
+ibDeclarations[] :=
+  Flatten @ Map[Function[p,
+    Module[{dir = ResoLoop`ResoLoopProject[p]},
+      If[FailureQ[dir], {},
+        Map[Function[f,
+          Module[{j = ibJSONParse[ibReadUTF8[f]]},
+            If[AssociationQ[j] && AssociationQ[Lookup[j, "slot", None]] && StringQ[Lookup[j["slot"], "name", None]],
+              <|"Project" -> p, "Directory" -> dir, "File" -> "content/" <> FileNameTake[f], "Path" -> f,
+                "Ownership" -> Lookup[Replace[Lookup[j, "ownership", <||>], Except[_Association] -> <||>], "key", FileBaseName[f]],
+                "RootName" -> j["slot"]["name"],
+                "Modified" -> Quiet @ Check[AbsoluteTime[FileDate[f, "Modification"]], 0]|>,
+              Nothing]]],
+          FileNames["*.json", FileNameJoin[{dir, "content"}]]]]]],
+    ResoLoop`ResoLoopProjects[]];
+
+ibFindDeclaration[name_String] :=
+  Module[{cands = Select[ibDeclarations[], ToLowerCase[#RootName] === ToLowerCase[name] &], exact, rank},
+    If[cands === {}, Return[None]];
+    exact = Select[cands, #RootName === name &];
+    If[exact =!= {}, cands = exact];
+    (* 同名の宣言が複数あるとき (失敗した建築ジョブが撮影用に残したスタブ宣言など。2026-09-23 に MoodLamp で
+       Grabbable 1 個だけのスタブを掴んで誤った ownership に adopt した): state に束縛済み > 中身が多い > 新しい *)
+    rank[d_] := {Boole[FileExistsQ[FileNameJoin[{d["Directory"], ".resoloop", "state", d["Ownership"] <> ".json"}]]],
+      LeafCount[ibJSONParse[ibReadUTF8[d["Path"]]]], d["Modified"]};
+    First[ReverseSortBy[cands, rank]]];
+
+(* 同じ ownership の state を worldState に持つ flux manifest (プロジェクト相対) *)
+ibFluxManifestsFor[dir_String, key_String] :=
+  Map["flux/" <> # &,
+    Select[FileNameTake /@ FileNames["*.flux.json", FileNameJoin[{dir, "flux"}]],
+      (* JSON の "\/" エスケープと Windows 区切りを正規化してから照合 *)
+      With[{txt = StringReplace[ibReadUTF8[FileNameJoin[{dir, "flux", #}]], {"\\/" -> "/", "\\\\" -> "/", "\\" -> "/"}]},
+        StringContainsQ[txt, "/state/" <> key <> ".json"]] &]];
+
+(* ワールドの実物: Root 直下で名前が一致する Slot *)
+ibLiveRoot[name_String, project_] :=
+  Module[{found = ResoLoop`ResoLoopFind["Name" -> name, "Project" -> project], hits},
+    If[FailureQ[found], Return[found]];
+    If[!ListQ[found], Return[None]];
+    hits = Select[found, AssociationQ[#] && ToLowerCase[Lookup[#, "name", ""]] === ToLowerCase[name] &&
+      MemberQ[{"Root/" <> Lookup[#, "name", ""], Lookup[#, "name", ""]}, Lookup[#, "path", "Root/" <> Lookup[#, "name", ""]]] &];
+    If[hits === {}, None, First[hits]]];
+
+ibTransformOf[slot_Association] :=
+  <|"Position" -> If[AssociationQ[Lookup[slot, "position", None]], ibVecOf[slot["position"]], None],
+    "Rotation" -> If[AssociationQ[Lookup[slot, "rotation", None]], ibQuat[slot["rotation"]], None],
+    "Scale" -> If[AssociationQ[Lookup[slot, "scale", None]],
+      N[{Lookup[slot["scale"], "x", 1], Lookup[slot["scale"], "y", 1], Lookup[slot["scale"], "z", 1]}], None]|>;
+
+ResoLoop`ResoLoopBuildTarget[text_String] :=
+  Module[{name = ibDetectTargetName[text], decl, live, insp, dir, key, stateFile},
+    If[name === None, Return[None]];
+    decl = ibFindDeclaration[name];
+    (* 宣言が無いときの観測は builder の既定プロジェクト (無ければ最初のプロジェクト) で行う *)
+    live = ibLiveRoot[name, If[decl === None,
+      With[{ps = ResoLoop`ResoLoopProjects[]},
+        Which[ps === {}, Automatic, MemberQ[ps, ResoLoop`$ResoLoopBuilderProject], ResoLoop`$ResoLoopBuilderProject, True, First[ps]]],
+      decl["Project"]]];
+    If[FailureQ[live], Return[live]];
+    Which[
+      decl === None && live === None, None,
+      decl === None,
+        ibFailure["TargetDeclarationMissing",
+          "ワールドの " <> live["name"] <> " (" <> live["id"] <> ") を作った宣言がプロジェクト群 (" <> ToString[ResoLoop`$ResoLoopProjectsDirectory] <>
+            ") にありません。宣言なしでは修正ジョブを組めません。位置や 1 フィールドの変更なら ResoLoopSlotSet / ResoLoopComponentSet (MCP: sourcevault_resonite_adjust) を使ってください。",
+          <|"RootName" -> live["name"], "LiveId" -> live["id"]|>],
+      live === None,
+        ibFailure["TargetNotFound",
+          "宣言 " <> decl["File"] <> " (" <> decl["Project"] <> ") の " <> decl["RootName"] <> " が今のワールドにありません。作り直すなら ResoLoopApply[\"" <>
+            decl["File"] <> "\", \"Project\" -> \"" <> decl["Project"] <> "\"] です。",
+          <|"RootName" -> decl["RootName"], "Project" -> decl["Project"], "File" -> decl["File"]|>],
+      True,
+        insp = ResoLoop`ResoLoopInspect[live["id"], "Project" -> decl["Project"]];
+        dir = decl["Directory"]; key = decl["Ownership"];
+        stateFile = FileNameJoin[{dir, ".resoloop", "state", key <> ".json"}];
+        <|"RootName" -> live["name"], "Project" -> decl["Project"], "Directory" -> dir, "File" -> decl["File"], "Ownership" -> key,
+          "LiveId" -> live["id"],
+          (* find の path は "Root/X" (CLI 0.1.0-preview.13) だが古い形 "X" にも備える。Root 直下と確かめた上で正規化 *)
+          "Path" -> With[{p = Lookup[live, "path", live["name"]]}, If[StringStartsQ[p, "Root/"], p, "Root/" <> p]],
+          "Transform" -> If[AssociationQ[insp], ibTransformOf[insp], <||>],
+          "StateFile" -> stateFile, "StateBound" -> FileExistsQ[stateFile],
+          "FluxManifests" -> ibFluxManifestsFor[dir, key]|>]];
+
+(* 実測の transform を宣言の root に写す (掴んで動かした物を再 apply で元の位置へ跳ばせない)。変えたら True *)
+ibPatchDeclarationTransform[path_String, t_Association] :=
+  Module[{j = ibJSONParse[ibReadUTF8[path]], slot, changed = False, sameQ},
+    If[!AssociationQ[j] || !AssociationQ[Lookup[j, "slot", None]], Return[False]];
+    slot = j["slot"];
+    sameQ[old_, new_] := ListQ[old] && Length[old] === Length[new] && VectorQ[old, NumericQ] && Max[Abs[N[old] - new]] < 10^-6;
+    Do[
+      With[{v = Lookup[t, k[[1]], None]},
+        If[ListQ[v] && VectorQ[v, NumericQ] && !sameQ[Lookup[slot, k[[2]], None], v], slot[k[[2]]] = v; changed = True]],
+      {k, {{"Position", "position"}, {"Rotation", "rotation"}, {"Scale", "scale"}}}];
+    If[!changed, Return[False]];
+    j["slot"] = slot;
+    Module[{strm = OpenWrite[path, BinaryFormat -> True]}, BinaryWrite[strm, ExportByteArray[j, "RawJSON"]]; Close[strm]];
+    True];
+
+(* 所有 state を作り直す (--adopt)。宣言と実物が一致していると確かめられるときだけ:
+   diff --adopt に delete / rename と Slot の create が無い (あれば人に判断を返す) *)
+ibBindOwnership[target_Association] :=
+  Module[{project = target["Project"], file = target["File"], diff, changes, deletes, slotCreates, applied},
+    diff = ResoLoop`ResoLoopDiff[file, "Adopt" -> True, "Mode" -> "Changes", "Project" -> project];
+    If[FailureQ[diff], Return[diff]];
+    changes = Replace[Lookup[diff, "changes", {}], Except[_List] -> {}];
+    deletes = Select[changes, AssociationQ[#] && MemberQ[{"delete", "rename"}, Lookup[#, "action", ""]] &];
+    slotCreates = Select[changes, AssociationQ[#] && Lookup[#, "action", ""] === "create" && Lookup[#, "kind", ""] === "slot" &];
+    If[deletes =!= {} || slotCreates =!= {},
+      Return[ibFailure["AdoptUnsafe",
+        "既存の " <> target["RootName"] <> " を宣言 " <> file <> " に束縛し直す (--adopt) と削除や Slot の新規作成が出るので、自動では行いません: " <>
+          StringRiffle[(ToString[Lookup[#, "action", "?"]] <> " " <> ToString[Lookup[#, "kind", "?"]] <> " " <> ToString[Lookup[#, "path", "?"]]) & /@ Join[deletes, slotCreates], "; "] <>
+          "。意図どおりなら人が ResoLoopDiff / ResoLoopApply[file, \"Adopt\" -> True, \"Project\" -> \"" <> project <> "\"] を実行してください。",
+        <|"Changes" -> Join[deletes, slotCreates], "Project" -> project, "File" -> file|>]]];
+    applied = ResoLoop`ResoLoopApply[file, "Adopt" -> True, "Project" -> project];
+    If[FailureQ[applied], Return[applied]];
+    <|"Adopted" -> True, "Changes" -> Length[changes],
+      "SlotsUpdated" -> Lookup[applied, "slotsUpdated", 0], "ComponentsUpdated" -> Lookup[applied, "componentsUpdated", 0],
+      "ComponentsAdded" -> Lookup[applied, "componentsAdded", 0], "StateFile" -> Lookup[applied, "stateFile", target["StateFile"]]|>];
 
 (* ============================================================
    起動
@@ -269,13 +499,10 @@ ibBatQuote[s_String] := "\"" <> StringReplace[s, "\"" -> "\\\""] <> "\"";
 
 Options[ResoLoop`ResoLoopBuildSubmit] = {"Project" -> Automatic, "Placement" -> Automatic, "Backend" -> Automatic,
   "PrivacyLevel" -> Automatic, "Model" -> Automatic, "MaxTurns" -> Automatic, "Timeout" -> Automatic, "Origin" -> "Notebook",
-  "Ownership" -> Automatic};
+  "Ownership" -> Automatic, "Target" -> Automatic, "Adopt" -> Automatic};
 ResoLoop`ResoLoopBuildSubmit[request_String, OptionsPattern[]] :=
   Module[{project, dir, exe, pl, backend, placement, key, prompt, id, wd, promptFile, bat, out, err, code, proc, job,
-    maxTurns, timeout, model, url, running},
-    project = Replace[OptionValue["Project"], Automatic -> ResoLoop`$ResoLoopBuilderProject];
-    dir = ResoLoop`ResoLoopProject[project];
-    If[FailureQ[dir], Return[dir]];
+    maxTurns, timeout, model, url, running, target, mode, bind = None, patched = False},
     (* 機密度: 私有ワールドはローカル backend の担当 (未実装) *)
     pl = Replace[OptionValue["PrivacyLevel"], Automatic :> ResoLoop`ResoLoopPrivacyLevel[]];
     backend = Replace[OptionValue["Backend"], Automatic -> If[NumericQ[pl] && pl > 0.5, "LocalToolLoop", "ClaudeCLI"]];
@@ -285,24 +512,51 @@ ResoLoop`ResoLoopBuildSubmit[request_String, OptionsPattern[]] :=
         <|"Backend" -> backend, "PrivacyLevel" -> pl|>]]];
     exe = ibExecutable[];
     If[FailureQ[exe], Return[exe]];
+    (* 接続 (URL をプロンプトに焼き込む) *)
+    If[!StringQ[ResoLoop`$ResoLoopURL], With[{c = ResoLoop`ResoLoopConnect[]}, If[FailureQ[c], Return[c]]]];
+    url = ResoLoop`$ResoLoopURL;
+    (* 対象: 既にワールドにある ResoLoop 製の物への変更か (修正モード)、新しい物か *)
+    target = Switch[OptionValue["Target"],
+      None, None,
+      _String, ResoLoop`ResoLoopBuildTarget[OptionValue["Target"]],
+      _, If[ibDetectTargetName[request] =!= None && !ibCreationRequestQ[request], ResoLoop`ResoLoopBuildTarget[request], None]];
+    If[FailureQ[target], Return[target]];
+    mode = If[AssociationQ[target], "modify", "create"];
+    (* 修正モードはその物を作ったプロジェクトで走る *)
+    project = If[mode === "modify", target["Project"], Replace[OptionValue["Project"], Automatic -> ResoLoop`$ResoLoopBuilderProject]];
+    dir = ResoLoop`ResoLoopProject[project];
+    If[FailureQ[dir], Return[dir]];
     (* 1 プロジェクト 1 ジョブ *)
     running = Select[ResoLoop`ResoLoopJobs[], #["Project"] === project && MemberQ[{"queued", "running"}, #["Status"]] &];
     If[running =!= {},
       Return[ibFailure["Busy", "このプロジェクトでは別の建築ジョブが実行中です: " <> running[[1]]["JobId"], <|"JobId" -> running[[1]]["JobId"]|>]]];
-    (* 接続 (URL をプロンプトに焼き込む) *)
-    If[!StringQ[ResoLoop`$ResoLoopURL], With[{c = ResoLoop`ResoLoopConnect[]}, If[FailureQ[c], Return[c]]]];
-    url = ResoLoop`$ResoLoopURL;
-    (* 配置 *)
-    placement = Switch[OptionValue["Placement"],
-      Automatic, With[{p = ResoLoop`ResoLoopUserPlacement["Project" -> project]},
-        If[FailureQ[p], <|"PlacementFailure" -> p["Code"]|>, Append[p, "Distance" -> 1.0]]],
-      _Association, With[{o = OptionValue["Placement"]},
-        If[KeyExistsQ[o, "Position"], o,
-          With[{p = ResoLoop`ResoLoopUserPlacement["User" -> Lookup[o, "User", Automatic], "Distance" -> Lookup[o, "Distance", 1.0], "Project" -> project]},
-            If[FailureQ[p], <|"PlacementFailure" -> p["Code"]|>, Append[p, "Distance" -> Lookup[o, "Distance", 1.0]]]]]],
-      _, <||>];
-    key = Replace[OptionValue["Ownership"], Automatic :> ibOwnershipKey[]];
-    prompt = ResoLoop`ResoLoopBuildPrompt[request, "Project" -> project, "Ownership" -> key, "Placement" -> placement, "URL" -> url];
+    If[mode === "modify",
+      (* builder の安全設定 (delete / --prune / --adopt の deny) と Dropbox 無視をこのプロジェクトにも揃える *)
+      Quiet @ Check[ResoLoop`ResoLoopProjectSync[project, "BuilderPolicy" -> True], Null];
+      (* 実測の transform を宣言に写す (掴んで動かした物を再 apply で跳ばせない) *)
+      patched = TrueQ @ Quiet @ Check[
+        ibPatchDeclarationTransform[FileNameJoin[{dir, target["File"]}], Replace[target["Transform"], Except[_Association] -> <||>]], False];
+      (* 所有 state が無い (別 PC で作った / セッションが変わった) → 宣言と実物が一致するなら束縛し直す *)
+      If[!TrueQ[target["StateBound"]],
+        If[OptionValue["Adopt"] === False,
+          Return[ibFailure["OwnershipUnbound",
+            "既存の " <> target["RootName"] <> " の所有 state (" <> target["StateFile"] <> ") がありません。\"Adopt\" -> Automatic なら宣言と実物が一致するときだけ束縛し直します。",
+            <|"Target" -> target|>]]];
+        bind = ibBindOwnership[target];
+        If[FailureQ[bind], Return[bind]];
+        target = Append[target, "StateBound" -> True]]];
+    (* 配置 (新規だけ。既存物は今の場所のまま) *)
+    placement = If[mode === "modify", <||>,
+      Switch[OptionValue["Placement"],
+        Automatic, With[{p = ResoLoop`ResoLoopUserPlacement["Project" -> project]},
+          If[FailureQ[p], <|"PlacementFailure" -> p["Code"]|>, Append[p, "Distance" -> 1.0]]],
+        _Association, With[{o = OptionValue["Placement"]},
+          If[KeyExistsQ[o, "Position"], o,
+            With[{p = ResoLoop`ResoLoopUserPlacement["User" -> Lookup[o, "User", Automatic], "Distance" -> Lookup[o, "Distance", 1.0], "Project" -> project]},
+              If[FailureQ[p], <|"PlacementFailure" -> p["Code"]|>, Append[p, "Distance" -> Lookup[o, "Distance", 1.0]]]]]],
+        _, <||>]];
+    key = If[mode === "modify", target["Ownership"], Replace[OptionValue["Ownership"], Automatic :> ibOwnershipKey[]]];
+    prompt = ResoLoop`ResoLoopBuildPrompt[request, "Project" -> project, "Ownership" -> key, "Placement" -> placement, "URL" -> url, "Target" -> target];
     maxTurns = Replace[OptionValue["MaxTurns"], Automatic -> ResoLoop`$ResoLoopBuilderMaxTurns];
     timeout = Replace[OptionValue["Timeout"], Automatic -> ResoLoop`$ResoLoopBuilderTimeout];
     model = Replace[OptionValue["Model"], Automatic -> ResoLoop`$ResoLoopBuilderModel];
@@ -331,11 +585,12 @@ ResoLoop`ResoLoopBuildSubmit[request_String, OptionsPattern[]] :=
     $ibProcs[id] = proc;
     job = <|"JobId" -> id, "Status" -> "running", "Phase" -> "starting", "Request" -> request, "Ownership" -> key,
       "Project" -> project, "Directory" -> dir, "Backend" -> backend, "PrivacyLevel" -> pl, "Origin" -> OptionValue["Origin"],
+      "Mode" -> mode, "Target" -> If[AssociationQ[target], target, None], "Adopt" -> bind, "TransformPatched" -> patched,
       "Placement" -> KeyDrop[placement, {}], "Started" -> AbsoluteTime[], "Timeout" -> timeout, "MaxTurns" -> maxTurns,
       "Files" -> <|"Prompt" -> promptFile, "Bat" -> bat, "Out" -> out, "Err" -> err, "Code" -> code|>,
       "ToolCalls" -> 0, "LastCommand" -> None, "Summary" -> None, "Report" -> None|>;
     ibSaveJob[job];
-    KeyTake[job, {"JobId", "Ownership", "Project", "Status", "Phase", "Placement"}]];
+    KeyTake[job, {"JobId", "Ownership", "Project", "Status", "Phase", "Placement", "Mode", "Target"}]];
 
 (* ============================================================
    stream-json の解釈
@@ -467,7 +722,7 @@ ResoLoop`ResoLoopJobStatus[id : (_String | Automatic) : Automatic] :=
     job = ibRefresh[jid];
     If[FailureQ[job], Return[job]];
     <|"JobId" -> job["JobId"], "Status" -> job["Status"], "Phase" -> job["Phase"], "Ownership" -> job["Ownership"],
-      "Project" -> job["Project"], "Request" -> job["Request"],
+      "Project" -> job["Project"], "Request" -> job["Request"], "Mode" -> Lookup[job, "Mode", "create"],
       "Elapsed" -> Round[If[NumericQ[Lookup[job, "Finished", None]], job["Finished"], AbsoluteTime[]] - job["Started"]],
       "ToolCalls" -> job["ToolCalls"], "LastCommand" -> job["LastCommand"], "Summary" -> job["Summary"],
       "RootName" -> If[AssociationQ[job["Report"]], Lookup[job["Report"], "rootName", None], None]|>];
@@ -480,7 +735,7 @@ ResoLoop`ResoLoopJobResult[id : (_String | Automatic) : Automatic] :=
     If[MemberQ[{"queued", "running"}, job["Status"]],
       Return[ibFailure["Running", "まだ実行中です (" <> ToString[job["Phase"]] <> ")", <|"JobId" -> jid, "Phase" -> job["Phase"]|>]]];
     KeyTake[job, {"JobId", "Status", "Ownership", "Project", "Request", "Summary", "Report", "RootName", "Capture", "Turns", "Cost",
-      "Denials", "Events", "ResultText", "Started", "Finished", "Placement"}]];
+      "Denials", "Events", "ResultText", "Started", "Finished", "Placement", "Mode", "Target", "Adopt"}]];
 
 Options[ResoLoop`ResoLoopJobWait] = {"Timeout" -> 300, "Poll" -> 5};
 ResoLoop`ResoLoopJobWait[id : (_String | Automatic) : Automatic, OptionsPattern[]] :=
@@ -521,6 +776,10 @@ ibWatchMarkdown[res_Association] :=
     StringJoin[
       "## Resonite 建築ジョブ ", If[status === "done", "完了", "終了 (" <> ToString[status] <> ")"], "\n\n",
       "- **依頼**: ", ToString[Lookup[res, "Request", ""]], "\n",
+      If[Lookup[res, "Mode", "create"] === "modify",
+        "- **対象**: 既存の " <> ToString[Lookup[Replace[Lookup[res, "Target", <||>], Except[_Association] -> <||>], "RootName", "?"]] <> " を変更" <>
+          If[AssociationQ[Lookup[res, "Adopt", None]], " (所有 state を束縛し直した)", ""] <> "\n",
+        ""],
       "- **結果**: ", ToString[Lookup[res, "Summary", ""]], "\n",
       If[AssociationQ[rep],
         StringJoin[
