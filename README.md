@@ -25,7 +25,7 @@ resoloop は orange3134 氏による別プロジェクト (AGPL-3.0-or-later、d
 - **Wolfram Language / Mathematica**: 14.x 以降を推奨します。
 - **OS**: Windows 11 を前提としています (`%LOCALAPPDATA%` のジョブ記録、bat 経由の非同期実行など)。
 - **Resonite**: 操作するセッションの **ホスト** であり、Dashboard → Session → Settings で **Enable ResoniteLink** を押しておく必要があります (ResoniteLink 0.13 系で確認)。
-- **.NET 10 SDK** と **resoloop** (`0.1.0-preview.13` で確認): [setup.md](ResoLoop_info/docs/setup.md) の手順で導入します。
+- **.NET 10 SDK** と **resoloop** (`0.1.0-preview.17` で確認): [setup.md](ResoLoop_info/docs/setup.md) の手順で導入します。
 - **Flux-SDK** (任意、1.9.0): ProtoFlux (ProtoGraph) の check / build / deploy を使う場合。
 - **Claude Code CLI** (任意): 建築ジョブの既定 backend。
 - **依存パッケージ (すべて任意)**: NBAccess.wl (許可ヘッド / 承認ヘッドの登録)、claudecode.wl (`ResoLoopBuildWatch` の polling tick)、SourceVault.wl (MCP 登録)、ResoniteRealtime.wl (上位。3D 生成が本パッケージを使う)。
@@ -36,7 +36,7 @@ resoloop は orange3134 氏による別プロジェクト (AGPL-3.0-or-later、d
 
    ```powershell
    winget install Microsoft.DotNet.SDK.10
-   dotnet tool install --global ResoLoop --version 0.1.0-preview.13
+   dotnet tool install --global ResoLoop --version 0.1.0-preview.17
    dotnet tool install --global Papaltine.FluxSDK --version 1.9.0    # 任意
    ```
 

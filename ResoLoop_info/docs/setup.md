@@ -11,7 +11,7 @@ macOS/Linux ではパス区切りやシェルコマンドを適宜読み替え�
 - **OS**: Windows 11 (`%LOCALAPPDATA%` 配下のジョブ記録、bat 経由の非同期実行など Windows 前提の実装を含みます)。
 - **Resonite**: デスクトップクライアント。操作したいセッションの **ホスト** であり、Dashboard → Session → Settings で **Enable ResoniteLink** を押しておく必要があります。ResoniteLink 0.13 系で動作確認しています。
 - **.NET 10 SDK**: resoloop と Flux-SDK は dotnet グローバルツールとして配布されています。ランタイムだけでは `dotnet tool` が使えないので SDK が要ります。
-- **resoloop** (`0.1.0-preview.13` で動作確認): 下記 3 節。
+- **resoloop** (`0.1.0-preview.17` で動作確認): 下記 3 節。
 - **Flux-SDK** (任意、`Papaltine.FluxSDK` 1.9.0): ProtoFlux (ProtoGraph) の check / build / deploy を使うときだけ。
 - **Claude Code CLI** (任意): 自然文の依頼から世界を組み立てる建築ジョブ (`ResoLoopBuildSubmit`) が `claude --print` を別プロセスで起動します。
 
@@ -36,7 +36,7 @@ resoloop のソースは https://github.com/orange3134/resoloop 、配布物は 
 2. resoloop を入れます。preview 版なので `--version` の明示が必須です。
 
    ```powershell
-   dotnet tool install --global ResoLoop --version 0.1.0-preview.13
+   dotnet tool install --global ResoLoop --version 0.1.0-preview.17
    resoloop --version
    ```
 
@@ -97,14 +97,14 @@ ResoLoopProject["VoiceBuilds", "Create" -> True]         (* 建築ジョブの�
 
 ```wolfram
 ResoLoopExecutable[]        (* resoloop.exe のパス。Failure["NotInstalled"] なら 3 節 *)
-ResoLoopVersion[]           (* "0.1.0-preview.13" *)
+ResoLoopVersion[]           (* "0.1.0-preview.17" *)
 ResoLoopDoctor[]            (* 接続 / Flux-SDK / managed data / log の各項目 *)
 ResoLoopConnect[]           (* "ws://localhost:<port>/"。候補が無ければ Failure["ResoniteLinkOff"] *)
 ResoLoopStatus[]["resoniteVersion"]
 ResoLoopHierarchy["Root", 1]
 ```
 
-`ResoLoopDoctor[]` の 5 項目がすべて pass なら準備完了です。
+`ResoLoopDoctor[]` の全項目 (preview.17 では resonite-link-url / flux-sdk / resonite-managed-data / resonite-log の 4 項目) がすべて pass なら準備完了です。resonite-link-url は Resonite でホストして Enable ResoniteLink するまで fail のままで正常です。
 
 ## 8. 任意機能の設定
 

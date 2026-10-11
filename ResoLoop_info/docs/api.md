@@ -48,7 +48,7 @@ Options: `"Project" -> Automatic, "URL" -> Automatic, "Timeout" -> Automatic, "R
 ## 環境・接続
 
 ### ResoLoopExecutable[] → path | Failure["NotInstalled"]
-### ResoLoopVersion[] → "0.1.0-preview.13"
+### ResoLoopVersion[] → "0.1.0-preview.17"
 ### ResoLoopDoctor[] → doctor の項目 (未接続なら `--url auto`、Timeout 120)
 ### ResoLoopDiscover[] → {<|"sessionId","sessionName","url"|>...}   Options: `"DiscoverySeconds" -> 12`
 ### ResoLoopConnect[] → url | Failure
