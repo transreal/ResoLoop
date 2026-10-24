@@ -11,7 +11,7 @@ macOS/Linux ではパス区切りやシェルコマンドを適宜読み替え�
 - **OS**: Windows 11 (`%LOCALAPPDATA%` 配下のジョブ記録、bat 経由の非同期実行など Windows 前提の実装を含みます)。
 - **Resonite**: デスクトップクライアント。操作したいセッションの **ホスト** であり、Dashboard → Session → Settings で **Enable ResoniteLink** を押しておく必要があります。ResoniteLink 0.13 系で動作確認しています。
 - **.NET 10 SDK**: resoloop と Flux-SDK は dotnet グローバルツールとして配布されています。ランタイムだけでは `dotnet tool` が使えないので SDK が要ります。
-- **resoloop** (`0.1.0-preview.17` で動作確認): 下記 3 節。
+- **resoloop** (`0.1.0` で動作確認): 下記 3 節。
 - **Flux-SDK** (任意、`Papaltine.FluxSDK` 1.9.0): ProtoFlux (ProtoGraph) の check / build / deploy を使うときだけ。
 - **Claude Code CLI** (任意): 自然文の依頼から世界を組み立てる建築ジョブ (`ResoLoopBuildSubmit`) が `claude --print` を別プロセスで起動します。
 
@@ -33,14 +33,14 @@ resoloop のソースは https://github.com/orange3134/resoloop 、配布物は 
    dotnet --list-sdks
    ```
 
-2. resoloop を入れます。preview 版なので `--version` の明示が必須です。
+2. resoloop を入れます。動作確認した版を `--version` で明示します。
 
    ```powershell
-   dotnet tool install --global ResoLoop --version 0.1.0-preview.17
+   dotnet tool install --global ResoLoop --version 0.1.0
    resoloop --version
    ```
 
-   実体は `%USERPROFILE%\.dotnet\tools\resoloop.exe` に置かれ、同フォルダがユーザー PATH に追加されます (`$ResoLoopExecutable` を明示しても構いません)。更新は `dotnet tool update --global ResoLoop --version <ver>`。
+   実体は `%USERPROFILE%\.dotnet\tools\resoloop.exe` に置かれ、同フォルダがユーザー PATH に追加されます (`$ResoLoopExecutable` を明示しても構いません)。更新は `dotnet tool update --global ResoLoop --version <ver>`。dotnet tool は機械ごとに入るので、Dropbox などでパッケージを共有していても PC ごとに更新が要ります。更新後は各プロジェクトで `resoloop skills sync <プロジェクト> --check` を見て、更新があれば `--update` の後に `ResoLoopProjectSync[name]` で `.claude/skills` へ複製し直してください。
 
 3. (任意) Flux-SDK を入れます。resoloop が要求する版は 1.9.0 です (`resoloop doctor` の指示に合わせてください)。
 
@@ -97,14 +97,14 @@ ResoLoopProject["VoiceBuilds", "Create" -> True]         (* 建築ジョブの�
 
 ```wolfram
 ResoLoopExecutable[]        (* resoloop.exe のパス。Failure["NotInstalled"] なら 3 節 *)
-ResoLoopVersion[]           (* "0.1.0-preview.17" *)
+ResoLoopVersion[]           (* "0.1.0" *)
 ResoLoopDoctor[]            (* 接続 / Flux-SDK / managed data / log の各項目 *)
 ResoLoopConnect[]           (* "ws://localhost:<port>/"。候補が無ければ Failure["ResoniteLinkOff"] *)
 ResoLoopStatus[]["resoniteVersion"]
 ResoLoopHierarchy["Root", 1]
 ```
 
-`ResoLoopDoctor[]` の全項目 (preview.17 では resonite-link-url / flux-sdk / resonite-managed-data / resonite-log の 4 項目) がすべて pass なら準備完了です。resonite-link-url は Resonite でホストして Enable ResoniteLink するまで fail のままで正常です。
+`ResoLoopDoctor[]` の全項目 (0.1.0 では resonite-link-url / flux-sdk / resonite-managed-data / resonite-log の 4 項目) がすべて pass なら準備完了です。resonite-link-url は Resonite でホストして Enable ResoniteLink するまで fail のままで正常です。
 
 ## 8. 任意機能の設定
 
@@ -134,4 +134,5 @@ ClaudeEval (claudecode.wl) から resoloop を使わせる場合の方針文 `10
 | `APPLY_STATE_WRITE_FAILED` | プロジェクトの `.resoloop/state` を同期ソフトが掴んだ。同じ apply を再実行する (checkpoint から収束)。恒常的なら 6 節の置き場変更 |
 | `resoloop logs` が共有違反で失敗 | Resonite 起動中は最新ログが書込共有なしで開かれている (resoloop 側の仕様)。最新 .log をコピーしてから `--path` で読む |
 | `dotnet tool` が `No .NET SDKs were found` | ランタイムだけで SDK が無い。3 節 1. |
+| Flux-SDK 1.10.0 で doctor の flux-sdk / resonite-managed-data が warning | resoloop 0.1.0 のテスト済みは 1.9.x のため。managed-data の確認処理は 1 行の `module X where { }` を check するが、1.10.0 は `module X` の後に改行が無いと PG1036 で拒否する。通常の ProtoGraph (`module X` 改行 `where {...}`) は 1.10.0 でも check が通る (2026-10-24 確認)。1.9.0 に戻すには `dotnet tool update --global Papaltine.FluxSDK --version 1.9.0 --allow-downgrade` |
 | 建築ジョブが `Failure["BackendUnavailable"]` | PrivacyLevel > 0.5 (私有ワールド相当) はローカル LLM backend 担当で v0.1 未実装。黙ってクラウドへ送らない設計 |

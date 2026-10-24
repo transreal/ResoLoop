@@ -26,8 +26,8 @@
    nuget.org の dotnet グローバルツール "ResoLoop") で、ライセンスが異なるためここには同梱しない。
    利用者が自分で入れる (手順は ResoLoop_info/docs/setup.md):
      1. .NET 10 SDK            winget install Microsoft.DotNet.SDK.10
-     2. resoloop               dotnet tool install --global ResoLoop --version 0.1.0-preview.17
-                               (preview 版なので --version 必須。実体 %USERPROFILE%\.dotnet\tools\resoloop.exe)
+     2. resoloop               dotnet tool install --global ResoLoop --version 0.1.0
+                               (確認済みの版を --version で明示。実体 %USERPROFILE%\.dotnet\tools\resoloop.exe)
      3. Flux-SDK (ProtoFlux)   dotnet tool install --global Papaltine.FluxSDK --version 1.9.0   (任意)
      4. Resonite 側            Dashboard > Session > Settings > Enable ResoniteLink (ホストであること)
      5. 環境変数 (User)        RESONITE_MANAGED_DATA_PATH = Resonite のインストール先、RESONITE_LOG_PATH = 同 \Logs
@@ -98,7 +98,7 @@ ResoLoopAsyncWait::usage = "ResoLoopAsyncWait[job, timeout] は終了まで待�
 ResoLoopAsyncKill::usage = "ResoLoopAsyncKill[job] はジョブのプロセスを止める。";
 
 ResoLoopExecutable::usage = "ResoLoopExecutable[] は解決した resoloop 実行ファイルのパス。見つからなければ Failure[\"NotInstalled\"]。";
-ResoLoopVersion::usage = "ResoLoopVersion[] は resoloop の版文字列 (例 \"0.1.0-preview.17\")。";
+ResoLoopVersion::usage = "ResoLoopVersion[] は resoloop の版文字列 (例 \"0.1.0\")。";
 ResoLoopDoctor::usage = "ResoLoopDoctor[] は resoloop doctor の各項目 (接続 / Flux-SDK / managed data / log) を返す。";
 ResoLoopDiscover::usage = "ResoLoopDiscover[] は ResoniteLink の UDP 通知を集めてセッション候補 {<|\"sessionId\",\"sessionName\",\"url\"|>...} を返す。\"DiscoverySeconds\" -> 12。";
 ResoLoopConnect::usage =
@@ -243,7 +243,7 @@ ResoLoop`ResoLoopExecutable[] :=
          FileExistsQ[FileNameJoin[{#, "resoloop.exe"}]] &],
       Return["resoloop"]];
     iFailure["NotInstalled",
-      "resoloop が見つかりません。dotnet tool install --global ResoLoop --version 0.1.0-preview.17 で入れてください。"]];
+      "resoloop が見つかりません。dotnet tool install --global ResoLoop --version 0.1.0 で入れてください。"]];
 
 ResoLoop`ResoLoopProjects[] :=
   If[!DirectoryQ[ResoLoop`$ResoLoopProjectsDirectory], {},
